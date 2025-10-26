@@ -450,6 +450,13 @@ class MainWindow(QMainWindow):
             if label not in ("Left", "Right"):
                 continue
             prev = self.pinch_states.get(label, False)
+            # 当手掌为握紧(CLENSCHED)时，不识别事件1/事件2；若此前为夹合则静默重置
+            hand_state = self.hand_states.get(label)
+            if hand_state == "CLENCHED":
+                if prev:
+                    self.pinch_states[label] = False
+                    self.pinch_since[label] = None
+                continue
             if is_pinch and not prev:
                 side_cn = "左手" if label == "Left" else "右手"
                 self.pinch_states[label] = True
@@ -483,7 +490,6 @@ class MainWindow(QMainWindow):
         inp = int(self.input_spin.value())
         boxes, confs, cids = detect(frame, self.net, self.out_names, conf_thres=conf, nms_thres=nms, input_size=inp)
         if self.last_detect_count is None or len(boxes) != self.last_detect_count:
-            self.log_event("手部检测", f"数量: {len(boxes)}")
             self.last_detect_count = len(boxes)
         vis = draw_detections(frame.copy(), boxes, confs, cids, self.class_names)
 
