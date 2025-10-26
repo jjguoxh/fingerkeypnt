@@ -15,7 +15,7 @@ try:
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QWidget, QLabel, QPushButton,
         QComboBox, QDoubleSpinBox, QSpinBox, QVBoxLayout, QHBoxLayout,
-        QGroupBox, QCheckBox
+        QGroupBox, QCheckBox, QTextEdit
     )
     from PyQt5.QtCore import QTimer, Qt
     from PyQt5.QtGui import QImage, QPixmap
@@ -24,7 +24,7 @@ except Exception:
     from PySide6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QLabel, QPushButton,
         QComboBox, QDoubleSpinBox, QSpinBox, QVBoxLayout, QHBoxLayout,
-        QGroupBox, QCheckBox
+        QGroupBox, QCheckBox, QTextEdit
     )
     from PySide6.QtCore import QTimer, Qt
     from PySide6.QtGui import QImage, QPixmap
@@ -235,6 +235,9 @@ class MainWindow(QMainWindow):
         self.iou_spin.setValue(0.15)
         self.only_match_checkbox = QCheckBox("仅与YOLO匹配后绘制关键点")
         self.only_match_checkbox.setChecked(False)
+        # 左右手镜像选项
+        self.swap_handedness_checkbox = QCheckBox("调换左右手")
+        self.swap_handedness_checkbox.setChecked(True)
 
         # 控制面板布局（恢复 v 与 ctrl_box 的定义）
         ctrl_box = QGroupBox("控制面板")
@@ -253,6 +256,7 @@ class MainWindow(QMainWindow):
         v.addWidget(QLabel("关键点匹配IOU阈值"))
         v.addWidget(self.iou_spin)
         v.addWidget(self.only_match_checkbox)
+        v.addWidget(self.swap_handedness_checkbox)
 
         hbtn = QHBoxLayout()
         hbtn.addWidget(self.start_btn)
@@ -263,7 +267,20 @@ class MainWindow(QMainWindow):
         root = QWidget()
         layout = QHBoxLayout(root)
         layout.addWidget(ctrl_box)
-        layout.addWidget(self.video_label, 1)
+        # 右侧：视频 + 日志
+        right_container = QWidget()
+        right_box = QHBoxLayout(right_container)
+        right_box.addWidget(self.video_label, 1)
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMinimumWidth(280)
+        self.log_text.setStyleSheet("background:#111;color:#ddd;")
+        log_group = QGroupBox("日志")
+        log_v = QVBoxLayout()
+        log_v.addWidget(self.log_text)
+        log_group.setLayout(log_v)
+        right_box.addWidget(log_group)
+        layout.addWidget(right_container, 1)
         self.setCentralWidget(root)
 
         # State
@@ -273,6 +290,10 @@ class MainWindow(QMainWindow):
         self.net = None
         self.out_names = []
         self.class_names = ["hand"]
+        self.last_detect_count = None
+        # 手掌状态（OPEN/CLENCHED）与持续时长统计（分别记录左右手）
+        self.hand_states = {"Left": None, "Right": None}
+        self.hand_since = {"Left": None, "Right": None}
 
         # Init models
         cfg_path, weights_path, class_names = ensure_models()
@@ -309,14 +330,17 @@ class MainWindow(QMainWindow):
         try:
             self.net, self.out_names = load_net(cfg_path, weights_path)
             self.statusBar().showMessage(f"使用模型: {cfg_path.name} / {weights_path.name}")
+            self.log_event("模型加载", f"{cfg_path.name}/{weights_path.name}")
         except Exception as e:
             self.statusBar().showMessage(f"加载模型失败: {e}")
+            self.log_event("模型加载失败", f"{e}")
 
     def start(self):
         try:
             self.cap = cv2.VideoCapture(0)
             if not self.cap.isOpened():
                 self.statusBar().showMessage("无法打开摄像头")
+                self.log_event("摄像头打开失败", "无法打开摄像头")
                 return
             # init mediapipe hands
             if HAS_MEDIAPIPE and self.enable_landmarks.isChecked():
@@ -330,10 +354,13 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     self.hands = None
                     self.statusBar().showMessage(f"初始化关键点失败: {e}")
+                    self.log_event("初始化关键点失败", f"{e}")
             self.timer.start(10)
             self.statusBar().showMessage("检测中...")
+            self.log_event("开始检测", "OK")
         except Exception as e:
             self.statusBar().showMessage(f"启动失败: {e}")
+            self.log_event("启动失败", f"{e}")
 
     def stop(self):
         self.timer.stop()
@@ -350,6 +377,57 @@ class MainWindow(QMainWindow):
                 pass
             self.hands = None
         self.statusBar().showMessage("已停止")
+        self.log_event("停止检测", "OK")
+
+    def log_event(self, name: str, status: str):
+         try:
+             ts = time.strftime("%H:%M:%S")
+             if hasattr(self, "log_text") and self.log_text is not None:
+                 self.log_text.append(f"[{ts}] {name} - {status}")
+         except Exception:
+             pass
+ 
+    def get_extended_count(self, hand_landmarks, W, H) -> int:
+        # 简化的张开判定：对食指、中指、无名指、小指，若tip在pip之上（y更小）则认为伸直
+        lm = hand_landmarks.landmark
+        count = 0
+        pairs = [(8, 6), (12, 10), (16, 14), (20, 18)]
+        for tip, pip in pairs:
+            try:
+                if lm[tip].y < lm[pip].y - 0.02:
+                    count += 1
+            except Exception:
+                pass
+        return count
+
+    def update_hand_states(self, per_hand_counts: List[Tuple[str, int]]):
+        if not per_hand_counts:
+            return
+        for label, ext in per_hand_counts:
+            if label not in ("Left", "Right"):
+                continue
+            prev_state = self.hand_states.get(label)
+            new_state = None
+            if ext >= 3:
+                new_state = "OPEN"
+            elif ext == 0:
+                new_state = "CLENCHED"
+            if new_state and new_state != prev_state:
+                duration_txt = None
+                since = self.hand_since.get(label)
+                if prev_state is not None and since is not None:
+                    try:
+                        duration = time.time() - float(since)
+                        duration_txt = f"持续: {duration:.1f}s"
+                    except Exception:
+                        pass
+                self.hand_states[label] = new_state
+                self.hand_since[label] = time.time()
+                side_cn = "左手" if label == "Left" else "右手"
+                if new_state == "OPEN":
+                    self.log_event(f"{side_cn}张开", duration_txt or "切换")
+                elif new_state == "CLENCHED":
+                    self.log_event(f"{side_cn}握紧", duration_txt or "切换")
 
     def on_frame(self):
         if self.cap is None or self.net is None:
@@ -361,6 +439,9 @@ class MainWindow(QMainWindow):
         nms = float(self.nms_spin.value())
         inp = int(self.input_spin.value())
         boxes, confs, cids = detect(frame, self.net, self.out_names, conf_thres=conf, nms_thres=nms, input_size=inp)
+        if self.last_detect_count is None or len(boxes) != self.last_detect_count:
+            self.log_event("手部检测", f"数量: {len(boxes)}")
+            self.last_detect_count = len(boxes)
         vis = draw_detections(frame.copy(), boxes, confs, cids, self.class_names)
 
         # keypoints
@@ -371,13 +452,28 @@ class MainWindow(QMainWindow):
                 if res.multi_hand_landmarks:
                     W, H = frame.shape[1], frame.shape[0]
                     match_thres = float(self.iou_spin.value())
-                    for hand_landmarks in res.multi_hand_landmarks:
+                    per_hand_counts = []
+                    for idx, hand_landmarks in enumerate(res.multi_hand_landmarks):
                         hb = bbox_from_landmarks(hand_landmarks, W, H)
                         draw_this = True
                         if self.only_match_checkbox.isChecked() and boxes:
                             overlaps = [iou(hb, b) for b in boxes]
                             if (not overlaps) or max(overlaps) < match_thres:
                                 draw_this = False
+                        # 识别左右手
+                        label = None
+                        try:
+                            if hasattr(res, "multi_handedness") and res.multi_handedness and len(res.multi_handedness) > idx:
+                                cls = res.multi_handedness[idx].classification[0]
+                                label = cls.label  # "Left" 或 "Right"
+                                # 根据选项调换左右
+                                if self.swap_handedness_checkbox.isChecked():
+                                    label = "Left" if label == "Right" else "Right" if label == "Left" else label
+                        except Exception:
+                            label = None
+                        ext = self.get_extended_count(hand_landmarks, W, H)
+                        if label in ("Left", "Right"):
+                            per_hand_counts.append((label, ext))
                         if draw_this:
                             mp_drawing.draw_landmarks(
                                 vis,
@@ -386,6 +482,7 @@ class MainWindow(QMainWindow):
                                 mp_styles.get_default_hand_landmarks_style(),
                                 mp_styles.get_default_hand_connections_style(),
                             )
+                    self.update_hand_states(per_hand_counts)
             except Exception:
                 pass
 
