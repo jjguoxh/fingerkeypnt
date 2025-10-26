@@ -294,6 +294,9 @@ class MainWindow(QMainWindow):
         # 手掌状态（OPEN/CLENCHED）与持续时长统计（分别记录左右手）
         self.hand_states = {"Left": None, "Right": None}
         self.hand_since = {"Left": None, "Right": None}
+        # 事件1（拇指-食指合拢）状态
+        self.pinch_states = {"Left": False, "Right": False}
+        self.pinch_since = {"Left": None, "Right": None}
 
         # Init models
         cfg_path, weights_path, class_names = ensure_models()
@@ -428,6 +431,46 @@ class MainWindow(QMainWindow):
                     self.log_event(f"{side_cn}张开", duration_txt or "切换")
                 elif new_state == "CLENCHED":
                     self.log_event(f"{side_cn}握紧", duration_txt or "切换")
+ 
+    def get_pinch_info(self, hand_landmarks) -> Tuple[bool, float]:
+        # 事件1：拇指(4)与食指(8)的归一化距离
+         try:
+             lm = hand_landmarks.landmark
+             dx = lm[8].x - lm[4].x
+             dy = lm[8].y - lm[4].y
+             dist = (dx * dx + dy * dy) ** 0.5
+             return dist < 0.06, dist  # 阈值可调整
+         except Exception:
+             return False, 1.0
+ 
+    def update_pinch_states(self, per_hand_pinch: List[Tuple[str, bool, float]]):
+        if not per_hand_pinch:
+            return
+        for label, is_pinch, dist in per_hand_pinch:
+            if label not in ("Left", "Right"):
+                continue
+            prev = self.pinch_states.get(label, False)
+            if is_pinch and not prev:
+                side_cn = "左手" if label == "Left" else "右手"
+                self.pinch_states[label] = True
+                self.pinch_since[label] = time.time()
+                self.log_event(f"{side_cn}事件1(拇指食指合拢)", f"距离:{dist:.3f}")
+            elif not is_pinch and prev:
+                side_cn = "左手" if label == "Left" else "右手"
+                # 记录事件2（拇指食指分离），附带持续时长与距离
+                duration_txt = None
+                since = self.pinch_since.get(label)
+                if since is not None:
+                    try:
+                        duration = time.time() - float(since)
+                        duration_txt = f"持续:{duration:.1f}s 距离:{dist:.3f}"
+                    except Exception:
+                        duration_txt = f"距离:{dist:.3f}"
+                else:
+                    duration_txt = f"距离:{dist:.3f}"
+                self.log_event(f"{side_cn}事件2(拇指食指分离)", duration_txt)
+                self.pinch_states[label] = False
+                self.pinch_since[label] = None
 
     def on_frame(self):
         if self.cap is None or self.net is None:
@@ -453,6 +496,7 @@ class MainWindow(QMainWindow):
                     W, H = frame.shape[1], frame.shape[0]
                     match_thres = float(self.iou_spin.value())
                     per_hand_counts = []
+                    per_hand_pinch = []
                     for idx, hand_landmarks in enumerate(res.multi_hand_landmarks):
                         hb = bbox_from_landmarks(hand_landmarks, W, H)
                         draw_this = True
@@ -472,8 +516,10 @@ class MainWindow(QMainWindow):
                         except Exception:
                             label = None
                         ext = self.get_extended_count(hand_landmarks, W, H)
+                        is_pinch, dist = self.get_pinch_info(hand_landmarks)
                         if label in ("Left", "Right"):
                             per_hand_counts.append((label, ext))
+                            per_hand_pinch.append((label, is_pinch, dist))
                         if draw_this:
                             mp_drawing.draw_landmarks(
                                 vis,
@@ -483,6 +529,7 @@ class MainWindow(QMainWindow):
                                 mp_styles.get_default_hand_connections_style(),
                             )
                     self.update_hand_states(per_hand_counts)
+                    self.update_pinch_states(per_hand_pinch)
             except Exception:
                 pass
 
