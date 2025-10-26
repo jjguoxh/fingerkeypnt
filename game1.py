@@ -63,20 +63,59 @@ class Dino:
         r = self.rect()
         x, y, w, h = r.x, r.y, r.w, r.h
         color = (51, 51, 51)
-        # 身体
-        pygame.draw.rect(surface, color, pygame.Rect(int(x + w*0.15), int(y + h*0.3), int(w*0.55), int(h*0.5)))
-        # 头部
-        pygame.draw.circle(surface, color, (int(x + w*0.78), int(y + h*0.35)), int(w*0.18))
+        # 直立身体（窄而高）
+        torso_w = int(w * 0.32)
+        torso_h = int(h * 0.62)
+        torso_x = int(x + w * 0.34)
+        torso_y = int(y + h * 0.25)
+        pygame.draw.rect(surface, color, pygame.Rect(torso_x, torso_y, torso_w, torso_h))
+        # 头部（在身体上方居中偏右）
+        head_r = int(w * 0.16)
+        head_cx = int(x + w * 0.50)
+        head_cy = int(y + h * 0.15)
+        pygame.draw.circle(surface, color, (head_cx, head_cy), head_r)
         # 眼睛
-        pygame.draw.circle(surface, (255, 255, 255), (int(x + w*0.82), int(y + h*0.32)), int(w*0.06))
-        pygame.draw.circle(surface, (0, 0, 0), (int(x + w*0.82), int(y + h*0.32)), int(w*0.03))
-        # 双腿
-        leg_w = int(w*0.18); leg_h = int(h*0.35)
-        pygame.draw.rect(surface, color, pygame.Rect(int(x + w*0.20), int(y + h - leg_h), leg_w, leg_h))
-        pygame.draw.rect(surface, color, pygame.Rect(int(x + w*0.45), int(y + h - leg_h), leg_w, leg_h))
-        # 尾巴
-        pts = [(int(x + w*0.10), int(y + h*0.50)), (int(x + w*0.02), int(y + h*0.45)), (int(x + w*0.10), int(y + h*0.70))]
-        pygame.draw.polygon(surface, color, pts)
+        eye_r_white = max(2, int(w * 0.06))
+        eye_r_black = max(1, int(w * 0.03))
+        eye_cx = int(head_cx + w * 0.05)
+        eye_cy = int(head_cy - h * 0.02)
+        pygame.draw.circle(surface, (255, 255, 255), (eye_cx, eye_cy), eye_r_white)
+        pygame.draw.circle(surface, (0, 0, 0), (eye_cx, eye_cy), eye_r_black)
+        # 小短臂（身体右侧）
+        arm_w = max(4, int(w * 0.12))
+        arm_h = max(4, int(h * 0.06))
+        arm_x = int(torso_x + torso_w - arm_w // 2)
+        arm_y = int(torso_y + h * 0.18)
+        pygame.draw.rect(surface, color, pygame.Rect(arm_x, arm_y, arm_w, arm_h))
+        pygame.draw.rect(surface, color, pygame.Rect(arm_x + arm_w // 2, arm_y, max(3, int(w * 0.06)), int(h * 0.14)))
+        # 双腿（在底部）
+        leg_w = max(6, int(w * 0.10))
+        leg_h = max(8, int(h * 0.26))
+        left_leg_x = int(x + w * 0.38)
+        right_leg_x = int(x + w * 0.56)
+        leg_y = int(y + h - leg_h)
+        pygame.draw.rect(surface, color, pygame.Rect(left_leg_x, leg_y, leg_w, leg_h))
+        pygame.draw.rect(surface, color, pygame.Rect(right_leg_x, leg_y, leg_w, leg_h))
+        # 尾巴（左后侧三角形）
+        tail_pts = [
+            (int(x + w * 0.28), int(y + h * 0.56)),
+            (int(x + w * 0.12), int(y + h * 0.50)),
+            (int(x + w * 0.26), int(y + h * 0.72)),
+        ]
+        pygame.draw.polygon(surface, color, tail_pts)
+        # 背鳍（两块小三角形）
+        spike1 = [
+            (int(torso_x), int(torso_y + h * 0.10)),
+            (int(torso_x - w * 0.08), int(torso_y + h * 0.08)),
+            (int(torso_x), int(torso_y + h * 0.18)),
+        ]
+        spike2 = [
+            (int(torso_x), int(torso_y + h * 0.24)),
+            (int(torso_x - w * 0.07), int(torso_y + h * 0.22)),
+            (int(torso_x), int(torso_y + h * 0.30)),
+        ]
+        pygame.draw.polygon(surface, color, spike1)
+        pygame.draw.polygon(surface, color, spike2)
 
 class Obstacle:
     def __init__(self):
@@ -96,24 +135,121 @@ class Obstacle:
         r = self.rect()
         x, y, w, h = r.x, r.y, r.w, r.h
         green = (10, 168, 128)
-        trunk_w = max(6, int(w*0.4))
-        trunk = pygame.Rect(int(x + w//2 - trunk_w//2), int(y), trunk_w, h)
-        pygame.draw.rect(surface, green, trunk, border_radius=2)
-        arm_len = int(h*0.35)
-        arm_w = max(6, int(trunk_w*0.8))
-        arm_y = int(y + h*0.35)
-        left_arm = pygame.Rect(int(x + w//2 - trunk_w//2 - arm_len), arm_y, arm_len, arm_w)
-        right_arm = pygame.Rect(int(x + w//2 + trunk_w//2), arm_y, arm_len, arm_w)
-        pygame.draw.rect(surface, green, left_arm, border_radius=2)
-        pygame.draw.rect(surface, green, right_arm, border_radius=2)
-        tip_h = int(h*0.25)
-        pygame.draw.rect(surface, green, pygame.Rect(left_arm.left, arm_y - tip_h, arm_w, tip_h), border_radius=2)
-        pygame.draw.rect(surface, green, pygame.Rect(right_arm.right - arm_w, arm_y - tip_h, arm_w, tip_h), border_radius=2)
+        # 主干圆角矩形（更像仙人掌）
+        trunk_w = max(8, int(w * 0.38))
+        trunk = pygame.Rect(int(x + w // 2 - trunk_w // 2), int(y), trunk_w, h)
+        pygame.draw.rect(surface, green, trunk, border_radius=4)
+        # 两侧手臂（圆角）
+        arm_len = int(h * 0.40)
+        arm_w = max(6, int(trunk_w * 0.80))
+        arm_y = int(y + h * 0.36)
+        left_arm = pygame.Rect(int(x + w // 2 - trunk_w // 2 - arm_len), arm_y, arm_len, arm_w)
+        right_arm = pygame.Rect(int(x + w // 2 + trunk_w // 2), arm_y, arm_len, arm_w)
+        pygame.draw.rect(surface, green, left_arm, border_radius=4)
+        pygame.draw.rect(surface, green, right_arm, border_radius=4)
+        # 手臂竖枝
+        tip_h = int(h * 0.28)
+        pygame.draw.rect(surface, green, pygame.Rect(left_arm.left, arm_y - tip_h, arm_w, tip_h), border_radius=4)
+        pygame.draw.rect(surface, green, pygame.Rect(right_arm.right - arm_w, arm_y - tip_h, arm_w, tip_h), border_radius=4)
+        # 简单刺点（小三角形）
+        spike_sz = max(3, int(w * 0.06))
+        spikes = [
+            (int(trunk.left + 4), int(y + h * 0.20)),
+            (int(trunk.left + 6), int(y + h * 0.55)),
+            (int(trunk.right - 6), int(y + h * 0.30)),
+            (int(trunk.right - 4), int(y + h * 0.70)),
+        ]
+        for sx, sy in spikes:
+            tri = [(sx, sy), (sx - spike_sz, sy + spike_sz), (sx + spike_sz, sy + spike_sz)]
+            pygame.draw.polygon(surface, green, tri)
+
+# 新增摄像头与手势识别依赖
+import time
+try:
+    import cv2
+except Exception:
+    cv2 = None
+try:
+    import mediapipe as mp
+    HAS_MEDIAPIPE = True
+except Exception:
+    mp = None
+    HAS_MEDIAPIPE = False
+
+SPAWN_MAX_MS = 2200
+
+# 基于 qt_app.py 的简化版：统计伸直手指数量
+def count_extended(hand_landmarks):
+    try:
+        lm = hand_landmarks.landmark
+        count = 0
+        for tip, pip in [(8, 6), (12, 10), (16, 14), (20, 18)]:
+            if lm[tip].y < lm[pip].y - 0.02:
+                count += 1
+        return count
+    except Exception:
+        return 0
+
+class HandOpenDetector:
+    def __init__(self):
+        self.cap = None
+        self.hands = None
+        self.last_clenched = False
+        self.ok = False
+        if cv2 is None or not HAS_MEDIAPIPE:
+            return
+        try:
+            self.cap = cv2.VideoCapture(0)
+            if not self.cap.isOpened():
+                self.cap = None
+                return
+            self.hands = mp.solutions.hands.Hands(
+                static_image_mode=False,
+                max_num_hands=2,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5,
+            )
+            self.ok = True
+        except Exception:
+            self.ok = False
+    def poll_edge_clenched(self):
+        # 返回是否从“非握紧”切换到“握紧”（边沿触发）
+        if not self.ok or self.cap is None or self.hands is None:
+            return False
+        ret, frame = self.cap.read()
+        if not ret:
+            return False
+        try:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            res = self.hands.process(rgb)
+            is_clenched = False
+            if res.multi_hand_landmarks:
+                for hand_landmarks in res.multi_hand_landmarks:
+                    ext = count_extended(hand_landmarks)
+                    if ext == 0:
+                        is_clenched = True
+                        break
+            edge = (not self.last_clenched) and is_clenched
+            self.last_clenched = is_clenched
+            return edge
+        except Exception:
+            return False
+    def close(self):
+        try:
+            if self.hands:
+                self.hands.close()
+        except Exception:
+            pass
+        try:
+            if self.cap:
+                self.cap.release()
+        except Exception:
+            pass
 
 class Game:
     def __init__(self):
         pygame.init()
-        pygame.display.set_caption("恐龙跳仙人掌 (空格键跳跃)")
+        pygame.display.set_caption("恐龙跳仙人掌 (摄像头握紧手掌跳跃)")
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("monospace", 16, bold=True)
@@ -130,6 +266,8 @@ class Game:
             except Exception:
                 self.cn_small = pygame.font.Font(self.cn_font_path, 16)
                 self.cn_big = pygame.font.Font(self.cn_font_path, 22)
+        # 摄像头与手势识别
+        self.hand = HandOpenDetector()
         self.reset()
     def reset(self):
         self.dino = Dino()
@@ -142,6 +280,12 @@ class Game:
         self.obsts.append(Obstacle())
     def update(self):
         if not self.game_over:
+            # 握紧手掌的边沿触发用于跳跃
+            try:
+                if self.hand and self.hand.poll_edge_clenched():
+                    self.dino.jump()
+            except Exception:
+                pass
             now = pygame.time.get_ticks()
             if now - self.last_spawn >= self.next_delta:
                 self.spawn()
@@ -162,10 +306,9 @@ class Game:
         s = self.screen
         s.fill((255, 255, 255))
         pygame.draw.line(s, (136, 136, 136), (0, GROUND_Y + 40), (WIDTH, GROUND_Y + 40), 1)
-        # pygame.draw.rect(s, (51, 51, 51), self.dino.rect())
+        # 使用自定义形状绘制恐龙与仙人掌
         self.dino.draw(s)
         for o in self.obsts:
-            # pygame.draw.rect(s, (10, 168, 128), o.rect())
             o.draw(s)
         score_text = self.font.render(f"SCORE: {self.score}", True, (0, 0, 0))
         s.blit(score_text, (10, 10))
@@ -190,10 +333,9 @@ class Game:
         if e.type == pygame.QUIT:
             pygame.quit(); sys.exit(0)
         if e.type == pygame.KEYDOWN and e.key == pygame.K_SPACE:
+            # 保留空格用于重新开始，不再用于跳跃
             if self.game_over:
                 self.reset()
-            else:
-                self.dino.jump()
     def run(self):
         while True:
             for e in pygame.event.get():
@@ -204,6 +346,13 @@ class Game:
 
 if __name__ == "__main__":
     try:
-        Game().run()
+        g = Game()
+        g.run()
     except Exception as ex:
         print("运行出错:", ex)
+    finally:
+        try:
+            if hasattr(g, "hand") and g.hand:
+                g.hand.close()
+        except Exception:
+            pass
