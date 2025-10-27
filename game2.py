@@ -16,12 +16,17 @@ except Exception:
     HAS_MEDIAPIPE = False
 
 WIDTH, HEIGHT = 960, 540
+PREVIEW_H = 240  # 底部摄像头预览区域高度
 GROUND_Y = HEIGHT - 80
 GRAVITY = 0.6
 MAX_PULL = 140
 POWER_SCALE = 0.25
 FRICTION = 0.995
 STOP_SPEED = 0.35
+
+# 捏合阈值（迟滞）：进入捏合用较小阈值，退出捏合用较大阈值，避免抖动
+PINCH_ON_THRESHOLD = 0.05
+PINCH_OFF_THRESHOLD = 0.08
 
 SLING_POS = pygame.Vector2(150, GROUND_Y - 60)
 BIRD_RADIUS = 12
@@ -63,6 +68,8 @@ class PinchDetector:
         self.hands = None
         self.ok = False
         self.last_pinch = False
+        self.last_frame = None  # 最近一帧RGB缓存
+        self.last_result = None
         if cv2 is None or not HAS_MEDIAPIPE:
             return
         try:
@@ -97,14 +104,60 @@ class PinchDetector:
                 dx = lm[8].x - lm[4].x
                 dy = lm[8].y - lm[4].y
                 dist = (dx * dx + dy * dy) ** 0.5
-                is_pinch = dist < 0.06  # 与 qt_app.py 阈值一致
+                # 使用迟滞逻辑：进入/退出阈值不同，提升稳定性与释放可靠性
+                if self.last_pinch:
+                    is_pinch = dist < PINCH_OFF_THRESHOLD
+                else:
+                    is_pinch = dist < PINCH_ON_THRESHOLD
                 # 用拇指与食指中点作为拉拽点
                 nx = (lm[4].x + lm[8].x) * 0.5
                 ny = (lm[4].y + lm[8].y) * 0.5
+                # 镜像X坐标，修正左右手操作方向
+                nx = 1.0 - nx
             self.last_pinch = is_pinch
+            self.last_frame = rgb
+            self.last_result = res
             return is_pinch, nx, ny
         except Exception:
             return False, None, None
+    def render_preview(self, w, h):
+        # 返回绘制了关键点的 pygame.Surface
+        if self.last_frame is None:
+            surf = pygame.Surface((w, h))
+            surf.fill((30, 30, 30))
+            try:
+                import pygame.freetype as freetype
+                f = freetype.Font(None, 18)
+                f.render_to(surf, (10, 10), "无摄像头画面", (220, 220, 220))
+            except Exception:
+                font = pygame.font.SysFont("sans-serif", 18)
+                surf.blit(font.render("无摄像头画面", True, (220, 220, 220)), (10, 10))
+            return surf
+        try:
+            vis = self.last_frame.copy()
+            if HAS_MEDIAPIPE and self.last_result is not None and self.last_result.multi_hand_landmarks:
+                mp_drawing = mp.solutions.drawing_utils
+                mp_styles = mp.solutions.drawing_styles
+                for hand_landmarks in self.last_result.multi_hand_landmarks:
+                    mp_drawing.draw_landmarks(
+                        vis,
+                        hand_landmarks,
+                        mp.solutions.hands.HAND_CONNECTIONS,
+                        mp_styles.get_default_hand_landmarks_style(),
+                        mp_styles.get_default_hand_connections_style(),
+                    )
+            # 镜像预览画面，保证与控制方向一致
+            try:
+                vis = cv2.flip(vis, 1)
+            except Exception:
+                pass
+            resized = cv2.resize(vis, (w, h), interpolation=cv2.INTER_LINEAR)
+            surf = pygame.image.frombuffer(resized.tobytes(), (w, h), "RGB")
+            return surf.convert()
+        except Exception:
+            surf = pygame.Surface((w, h))
+            surf.fill((50, 50, 50))
+            return surf
     def close(self):
         try:
             if self.hands:
@@ -203,7 +256,7 @@ class Game:
     def __init__(self):
         pygame.init()
         pygame.display.set_caption("愤怒的小鸟 (摄像头捏合控制原型)")
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        self.screen = pygame.display.set_mode((WIDTH, HEIGHT + PREVIEW_H))
         self.clock = pygame.time.Clock()
         # 英文字体（作为兜底）
         self.font = pygame.font.SysFont("monospace", 18, bold=True)
@@ -352,6 +405,30 @@ class Game:
             ]
             for i, t in enumerate(instr):
                 s.blit(self.cn_small.render(t, True, (20, 20, 20)), (10, 60 + i * 22))
+
+        # 底部摄像头预览区域
+        pygame.draw.rect(s, (210, 210, 210), pygame.Rect(0, HEIGHT, WIDTH, PREVIEW_H))
+        pygame.draw.line(s, (160, 160, 160), (0, HEIGHT), (WIDTH, HEIGHT), 2)
+        if hasattr(self, "pinch") and self.pinch and self.pinch.ok:
+            preview = self.pinch.render_preview(WIDTH, PREVIEW_H)
+            s.blit(preview, (0, HEIGHT))
+            caption = "摄像头预览 (含关键点)"
+            try:
+                if self.cn_use_freetype:
+                    self.cn_small.render_to(s, (10, HEIGHT + 10), caption, (10, 10, 10))
+                else:
+                    s.blit(self.cn_small.render(caption, True, (10, 10, 10)), (10, HEIGHT + 10))
+            except Exception:
+                s.blit(self.font.render(caption, True, (10, 10, 10)), (10, HEIGHT + 10))
+        else:
+            no_cam = "摄像头不可用或未安装 MediaPipe"
+            try:
+                if self.cn_use_freetype:
+                    self.cn_small.render_to(s, (10, HEIGHT + 10), no_cam, (120, 20, 20))
+                else:
+                    s.blit(self.cn_small.render(no_cam, True, (120, 20, 20)), (10, HEIGHT + 10))
+            except Exception:
+                s.blit(self.font.render(no_cam, True, (120, 20, 20)), (10, HEIGHT + 10))
 
     def handle_event(self, e):
         # 改为摄像头捏合控制，不再处理鼠标拖拽

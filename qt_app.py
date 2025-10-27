@@ -200,7 +200,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("手部检测 - PyQt + YOLO")
-        self.resize(980, 640)
+        self.resize(1280, 1024)
 
         self.video_label = QLabel("摄像头画面")
         self.video_label.setAlignment(Qt.AlignCenter)
@@ -270,6 +270,8 @@ class MainWindow(QMainWindow):
         # 右侧：视频 + 日志
         right_container = QWidget()
         right_box = QHBoxLayout(right_container)
+        # 布局本身无法设置尺寸，设置视频区域最小尺寸以达到右侧布局的“缺省640×480”效果
+        self.video_label.setMinimumSize(1024, 768)
         right_box.addWidget(self.video_label, 1)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
