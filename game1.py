@@ -195,6 +195,7 @@ class HandOpenDetector:
         self.cap = None
         self.hands = None
         self.last_clenched = False
+        self.last_presence = False
         self.ok = False
         if cv2 is None or not HAS_MEDIAPIPE:
             return
@@ -215,14 +216,17 @@ class HandOpenDetector:
     def poll_edge_clenched(self):
         # 返回是否从“非握紧”切换到“握紧”（边沿触发）
         if not self.ok or self.cap is None or self.hands is None:
+            self.last_presence = False
             return False
         ret, frame = self.cap.read()
         if not ret:
+            self.last_presence = False
             return False
         try:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             res = self.hands.process(rgb)
             is_clenched = False
+            self.last_presence = bool(getattr(res, "multi_hand_landmarks", None))
             if res.multi_hand_landmarks:
                 for hand_landmarks in res.multi_hand_landmarks:
                     ext = count_extended(hand_landmarks)
@@ -233,7 +237,10 @@ class HandOpenDetector:
             self.last_clenched = is_clenched
             return edge
         except Exception:
+            self.last_presence = False
             return False
+    def has_hand(self):
+        return bool(self.last_presence)
     def close(self):
         try:
             if self.hands:
@@ -268,6 +275,7 @@ class Game:
                 self.cn_big = pygame.font.Font(self.cn_font_path, 22)
         # 摄像头与手势识别
         self.hand = HandOpenDetector()
+        self.paused_for_no_hand = False
         self.reset()
     def reset(self):
         self.dino = Dino()
@@ -280,27 +288,47 @@ class Game:
         self.obsts.append(Obstacle())
     def update(self):
         if not self.game_over:
-            # 握紧手掌的边沿触发用于跳跃
+            # 摄像头检测：仅当检测到手时卷轴滚动，否则暂停并提示
             try:
-                if self.hand and self.hand.poll_edge_clenched():
-                    self.dino.jump()
+                if self.hand:
+                    # 更新握紧边沿（跳跃）并同时刷新 presence
+                    if self.hand.poll_edge_clenched():
+                        self.dino.jump()
+                    hand_present = self.hand.has_hand()
+                else:
+                    hand_present = False
             except Exception:
-                pass
+                hand_present = False
+
+            self.paused_for_no_hand = not hand_present
+
             now = pygame.time.get_ticks()
-            if now - self.last_spawn >= self.next_delta:
-                self.spawn()
-                self.last_spawn = now
-                self.next_delta = random.randint(SPAWN_MIN_MS, SPAWN_MAX_MS)
+            if not self.paused_for_no_hand:
+                # 正常生成障碍
+                if now - self.last_spawn >= self.next_delta:
+                    self.spawn()
+                    self.last_spawn = now
+                    self.next_delta = random.randint(SPAWN_MIN_MS, SPAWN_MAX_MS)
+
+            # 恐龙自身更新（保持重力与站立逻辑）
             self.dino.update()
+
+            # 卷轴速度：有手则正常移动，无手则速度为0
+            cur_speed = OBST_SPEED if not self.paused_for_no_hand else 0
             for o in list(self.obsts):
+                o.speed = cur_speed
                 o.update()
                 if o.offscreen():
                     self.obsts.remove(o)
+
+            # 碰撞检测仍然有效（即使暂停，若已接近则会判定）
             for o in self.obsts:
                 if self.dino.rect().colliderect(o.rect()):
                     self.game_over = True
                     break
-            if not self.game_over:
+
+            # 计分：仅在滚动时增加
+            if not self.game_over and not self.paused_for_no_hand:
                 self.score += 1
     def draw(self):
         s = self.screen
@@ -312,6 +340,23 @@ class Game:
             o.draw(s)
         score_text = self.font.render(f"SCORE: {self.score}", True, (0, 0, 0))
         s.blit(score_text, (10, 10))
+        # 未检测到手的提示覆盖层
+        if (not self.game_over) and self.paused_for_no_hand:
+            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            overlay.fill((255, 255, 255, 120))
+            s.blit(overlay, (0, 0))
+            msg = "未检测到手，卷轴已暂停"
+            if getattr(self, "cn_use_freetype", False) and hasattr(self, "cn_big"):
+                rect = self.cn_big.get_rect(msg)
+                x = WIDTH // 2 - rect.width // 2
+                y = HEIGHT // 2 - rect.height // 2
+                self.cn_big.render_to(s, (x, y), msg, (200, 0, 0))
+            elif hasattr(self, "cn_big"):
+                text = self.cn_big.render(msg, True, (200, 0, 0))
+                s.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - text.get_height() // 2))
+            else:
+                text = self.big_font.render(msg, True, (200, 0, 0))
+                s.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - text.get_height() // 2))
         if self.game_over:
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 128))
