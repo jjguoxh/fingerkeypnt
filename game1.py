@@ -11,6 +11,10 @@ OBST_SPEED = 6
 SPAWN_MIN_MS = 1200
 SPAWN_MAX_MS = 2200
 
+# 视差背景速度（越远速度越慢）
+PARALLAX_CLOUD_SPEED = max(1, int(OBST_SPEED * 0.25))   # 云层：最远
+PARALLAX_MOUNTAIN_SPEED = max(1, int(OBST_SPEED * 0.5))  # 山轮廓：次远
+
 # 查找支持中文的字体路径
 def find_cn_font_path():
     try:
@@ -163,6 +167,49 @@ class Obstacle:
             tri = [(sx, sy), (sx - spike_sz, sy + spike_sz), (sx + spike_sz, sy + spike_sz)]
             pygame.draw.polygon(surface, green, tri)
 
+# 云朵（最远层）
+class Cloud:
+    def __init__(self):
+        self.speed = PARALLAX_CLOUD_SPEED
+        self.reset(x_init=True)
+    def reset(self, x_init=False):
+        self.x = random.randint(0, WIDTH) if x_init else WIDTH + random.randint(20, 120)
+        self.y = random.randint(10, 60)
+        self.w = random.randint(40, 70)
+        self.h = random.randint(18, 28)
+    def update(self, paused=False):
+        v = 0 if paused else self.speed
+        self.x -= v
+        if self.x + self.w < 0:
+            self.reset(x_init=False)
+    def draw(self, s):
+        c = (220, 220, 220)
+        pygame.draw.ellipse(s, c, pygame.Rect(int(self.x), int(self.y), int(self.w), int(self.h)))
+        pygame.draw.ellipse(s, c, pygame.Rect(int(self.x + self.w * 0.25), int(self.y - self.h * 0.20), int(self.w * 0.8), int(self.h)))
+        pygame.draw.ellipse(s, c, pygame.Rect(int(self.x + self.w * 0.55), int(self.y), int(self.w), int(self.h)))
+
+# 山体轮廓（次远层）
+class Mountain:
+    def __init__(self):
+        self.speed = PARALLAX_MOUNTAIN_SPEED
+        self.reset(x_init=True)
+    def reset(self, x_init=False):
+        self.base_y = HEIGHT - 28
+        self.w = random.randint(80, 140)
+        self.h = random.randint(30, 60)
+        self.x = random.randint(0, WIDTH) if x_init else WIDTH + random.randint(10, 80)
+    def update(self, paused=False):
+        v = 0 if paused else self.speed
+        self.x -= v
+        if self.x + self.w < 0:
+            self.reset(x_init=False)
+    def draw(self, s):
+        color = (180, 180, 180)
+        p1 = (int(self.x), int(self.base_y))
+        p2 = (int(self.x + self.w // 2), int(self.base_y - self.h))
+        p3 = (int(self.x + self.w), int(self.base_y))
+        pygame.draw.polygon(s, color, [p1, p2, p3])
+
 # 新增摄像头与手势识别依赖
 import time
 try:
@@ -276,6 +323,9 @@ class Game:
         # 摄像头与手势识别
         self.hand = HandOpenDetector()
         self.paused_for_no_hand = False
+        # 背景视差层
+        self.clouds = [Cloud() for _ in range(4)]
+        self.mountains = [Mountain() for _ in range(6)]
         self.reset()
     def reset(self):
         self.dino = Dino()
@@ -301,6 +351,12 @@ class Game:
                 hand_present = False
 
             self.paused_for_no_hand = not hand_present
+
+            # 背景层更新：与暂停状态同步
+            for m in self.mountains:
+                m.update(paused=self.paused_for_no_hand)
+            for c in self.clouds:
+                c.update(paused=self.paused_for_no_hand)
 
             now = pygame.time.get_ticks()
             if not self.paused_for_no_hand:
@@ -333,6 +389,11 @@ class Game:
     def draw(self):
         s = self.screen
         s.fill((255, 255, 255))
+        # 背景层：先画最远的云，再画山体轮廓
+        for c in self.clouds:
+            c.draw(s)
+        for m in self.mountains:
+            m.draw(s)
         pygame.draw.line(s, (136, 136, 136), (0, GROUND_Y + 40), (WIDTH, GROUND_Y + 40), 1)
         # 使用自定义形状绘制恐龙与仙人掌
         self.dino.draw(s)
