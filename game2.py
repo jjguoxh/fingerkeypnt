@@ -17,6 +17,8 @@ except Exception:
 
 WIDTH, HEIGHT = 960, 540
 PREVIEW_H = 240  # 底部摄像头预览区域高度
+# 预览区竖线位置（按宽度比例），用于判定左右侧
+PREVIEW_DIV_X_RATIO = 0.5
 GROUND_Y = HEIGHT - 80
 GRAVITY = 0.6
 MAX_PULL = 140
@@ -132,6 +134,9 @@ class PinchDetector:
             except Exception:
                 font = pygame.font.SysFont("sans-serif", 18)
                 surf.blit(font.render("无摄像头画面", True, (220, 220, 220)), (10, 10))
+            # 绘制竖线（亮红色）
+            cx = int(w * PREVIEW_DIV_X_RATIO)
+            pygame.draw.line(surf, (255, 0, 0), (cx, 0), (cx, h), 3)
             return surf
         try:
             vis = self.last_frame.copy()
@@ -153,10 +158,15 @@ class PinchDetector:
                 pass
             resized = cv2.resize(vis, (w, h), interpolation=cv2.INTER_LINEAR)
             surf = pygame.image.frombuffer(resized.tobytes(), (w, h), "RGB")
+            # 绘制竖线（亮红色）
+            cx = int(w * PREVIEW_DIV_X_RATIO)
+            pygame.draw.line(surf, (255, 0, 0), (cx, 0), (cx, h), 3)
             return surf.convert()
         except Exception:
             surf = pygame.Surface((w, h))
             surf.fill((50, 50, 50))
+            cx = int(w * PREVIEW_DIV_X_RATIO)
+            pygame.draw.line(surf, (255, 0, 0), (cx, 0), (cx, h), 3)
             return surf
     def close(self):
         try:
@@ -322,8 +332,14 @@ class Game:
                 is_pinch, nx, ny = self.pinch.poll_pinch()
                 if is_pinch and nx is not None and ny is not None and not self.current_bird.launched:
                     self.dragging = True
+                    # 根据竖线左右侧约束拉弓方向：左侧 -> v.x 负（右发），右侧 -> v.x 正（左发）
                     pinch_pos = pygame.Vector2(nx * WIDTH, ny * HEIGHT)
                     v = pinch_pos - SLING_POS
+                    # 依据预览竖线左右决定水平符号
+                    if nx < PREVIEW_DIV_X_RATIO:
+                        v.x = -abs(v.x)
+                    else:
+                        v.x = abs(v.x)
                     if v.length() > MAX_PULL:
                         v.scale_to_length(MAX_PULL)
                     self.drag_pos = SLING_POS + v
