@@ -2,6 +2,7 @@ import sys
 import os
 import random
 import pygame
+import numpy as np
 
 WIDTH, HEIGHT = 800, 200
 GROUND_Y = 160
@@ -44,12 +45,38 @@ def find_cn_font_path():
             pass
     return None
 
+def load_dino_image():
+    p = os.path.join(os.path.dirname(__file__), "1.jpeg")
+    try:
+        img = pygame.image.load(p).convert_alpha()
+    except Exception:
+        return None
+    try:
+        arr = pygame.surfarray.pixels3d(img)
+        alpha = pygame.surfarray.pixels_alpha(img)
+        mask = (arr[:, :, 0] >= 240) & (arr[:, :, 1] >= 240) & (arr[:, :, 2] >= 240)
+        alpha[:] = np.where(mask, 0, 255).astype(np.uint8)
+        del arr
+        del alpha
+    except Exception:
+        try:
+            img.set_colorkey((255, 255, 255))
+        except Exception:
+            pass
+    try:
+        img = pygame.transform.flip(img, True, False)
+    except Exception:
+        pass
+    return img
+
 class Dino:
     def __init__(self):
         self.x, self.y = 50, GROUND_Y
         self.w, self.h = 40, 40
         self.vy = 0.0
         self.on_ground = True
+        self.scale = 2
+        self.sprite = load_dino_image()
     def rect(self):
         return pygame.Rect(int(self.x), int(self.y), self.w, self.h)
     def jump(self):
@@ -65,34 +92,37 @@ class Dino:
             self.on_ground = True
     def draw(self, surface):
         r = self.rect()
+        if self.sprite:
+            w2 = int(r.w * self.scale)
+            h2 = int(r.h * self.scale)
+            img = pygame.transform.smoothscale(self.sprite, (w2, h2))
+            dx = (w2 - r.w) // 2
+            dy = (h2 - r.h)
+            surface.blit(img, (r.x - dx, r.y - dy))
+            return
         x, y, w, h = r.x, r.y, r.w, r.h
         color = (51, 51, 51)
-        # 直立身体（窄而高）
         torso_w = int(w * 0.32)
         torso_h = int(h * 0.62)
         torso_x = int(x + w * 0.34)
         torso_y = int(y + h * 0.25)
         pygame.draw.rect(surface, color, pygame.Rect(torso_x, torso_y, torso_w, torso_h))
-        # 头部（在身体上方居中偏右）
         head_r = int(w * 0.16)
         head_cx = int(x + w * 0.50)
         head_cy = int(y + h * 0.15)
         pygame.draw.circle(surface, color, (head_cx, head_cy), head_r)
-        # 眼睛
         eye_r_white = max(2, int(w * 0.06))
         eye_r_black = max(1, int(w * 0.03))
         eye_cx = int(head_cx + w * 0.05)
         eye_cy = int(head_cy - h * 0.02)
         pygame.draw.circle(surface, (255, 255, 255), (eye_cx, eye_cy), eye_r_white)
         pygame.draw.circle(surface, (0, 0, 0), (eye_cx, eye_cy), eye_r_black)
-        # 小短臂（身体右侧）
         arm_w = max(4, int(w * 0.12))
         arm_h = max(4, int(h * 0.06))
         arm_x = int(torso_x + torso_w - arm_w // 2)
         arm_y = int(torso_y + h * 0.18)
         pygame.draw.rect(surface, color, pygame.Rect(arm_x, arm_y, arm_w, arm_h))
         pygame.draw.rect(surface, color, pygame.Rect(arm_x + arm_w // 2, arm_y, max(3, int(w * 0.06)), int(h * 0.14)))
-        # 双腿（在底部）
         leg_w = max(6, int(w * 0.10))
         leg_h = max(8, int(h * 0.26))
         left_leg_x = int(x + w * 0.38)
@@ -100,14 +130,12 @@ class Dino:
         leg_y = int(y + h - leg_h)
         pygame.draw.rect(surface, color, pygame.Rect(left_leg_x, leg_y, leg_w, leg_h))
         pygame.draw.rect(surface, color, pygame.Rect(right_leg_x, leg_y, leg_w, leg_h))
-        # 尾巴（左后侧三角形）
         tail_pts = [
             (int(x + w * 0.28), int(y + h * 0.56)),
             (int(x + w * 0.12), int(y + h * 0.50)),
             (int(x + w * 0.26), int(y + h * 0.72)),
         ]
         pygame.draw.polygon(surface, color, tail_pts)
-        # 背鳍（两块小三角形）
         spike1 = [
             (int(torso_x), int(torso_y + h * 0.10)),
             (int(torso_x - w * 0.08), int(torso_y + h * 0.08)),
