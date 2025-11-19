@@ -309,6 +309,13 @@ class MainWindow(QMainWindow):
         self.index_bent_on_thres = 0.06
         self.index_bent_off_thres = 0.08
         self.index_tap_press_max = 0.25
+        self.last_hands_distance = None
+        self.zoom_cooldown_ts = None
+        self.zoom_cooldown_interval = 0.6
+        self.zoom_move_delta = 0.02
+        self.zoom_mode = None
+        self.zoom_start_dist = None
+        self.zoom_start_ts = None
 
         # Init models
         cfg_path, weights_path, class_names = ensure_models()
@@ -515,6 +522,14 @@ class MainWindow(QMainWindow):
         except Exception:
             return False, 1.0
 
+    def get_hand_center(self, hand_landmarks) -> Tuple[float, float]:
+        try:
+            xs = [l.x for l in hand_landmarks.landmark]
+            ys = [l.y for l in hand_landmarks.landmark]
+            return sum(xs) / len(xs), sum(ys) / len(ys)
+        except Exception:
+            return None, None
+
     def update_index_tap_states(self, per_hand_index: List[Tuple[str, bool, float]]):
         if not per_hand_index:
             return
@@ -576,6 +591,57 @@ class MainWindow(QMainWindow):
                 self.index_tap_since[label] = None
                 self.last_index_tap_press_ts[label] = None
 
+    def update_two_hand_zoom(self, left_center, right_center, left_ext, right_ext):
+        if not left_center or not right_center:
+            self.zoom_mode = None
+            return
+        if left_ext is None or right_ext is None:
+            self.zoom_mode = None
+            return
+        lx, ly = left_center
+        rx, ry = right_center
+        if lx is None or rx is None:
+            self.zoom_mode = None
+            return
+        dx = lx - rx
+        dy = ly - ry
+        dist = (dx * dx + dy * dy) ** 0.5
+        now_ts = time.time()
+        if self.zoom_cooldown_ts is not None:
+            try:
+                if now_ts - float(self.zoom_cooldown_ts) < float(self.zoom_cooldown_interval):
+                    self.last_hands_distance = dist
+                    return
+            except Exception:
+                pass
+        if left_ext <= 1 and right_ext <= 1:
+            if self.zoom_mode != "pinch":
+                self.zoom_mode = "pinch"
+                self.zoom_start_dist = dist
+                self.zoom_start_ts = now_ts
+            else:
+                if self.zoom_start_dist is not None and dist <= float(self.zoom_start_dist) - float(self.zoom_move_delta):
+                    self.log_event("双手缩小", f"变化:{(dist - float(self.zoom_start_dist)):.3f}")
+                    self.zoom_cooldown_ts = now_ts
+                    self.zoom_mode = None
+                    self.zoom_start_dist = None
+                    self.zoom_start_ts = None
+        elif left_ext >= 3 and right_ext >= 3:
+            if self.zoom_mode != "open":
+                self.zoom_mode = "open"
+                self.zoom_start_dist = dist
+                self.zoom_start_ts = now_ts
+            else:
+                if self.zoom_start_dist is not None and dist >= float(self.zoom_start_dist) + float(self.zoom_move_delta):
+                    self.log_event("双手扩大", f"变化:{(dist - float(self.zoom_start_dist)):.3f}")
+                    self.zoom_cooldown_ts = now_ts
+                    self.zoom_mode = None
+                    self.zoom_start_dist = None
+                    self.zoom_start_ts = None
+        else:
+            self.zoom_mode = None
+        self.last_hands_distance = dist
+
     def on_frame(self):
         if self.cap is None or self.net is None:
             return
@@ -601,6 +667,11 @@ class MainWindow(QMainWindow):
                     per_hand_counts = []
                     per_hand_pinch = []
                     per_hand_index_tap = []
+                    left_center = None
+                    right_center = None
+                    left_ext = None
+                    right_ext = None
+                    hand_infos = []
                     for idx, hand_landmarks in enumerate(res.multi_hand_landmarks):
                         hb = bbox_from_landmarks(hand_landmarks, W, H)
                         draw_this = True
@@ -625,6 +696,8 @@ class MainWindow(QMainWindow):
                         bent, bend_dist = self.get_index_bent_info(hand_landmarks)
                         if label in ("Left", "Right"):
                             per_hand_index_tap.append((label, bent, bend_dist))
+                            cx, cy = self.get_hand_center(hand_landmarks)
+                            hand_infos.append(((cx, cy), ext, label))
                         if draw_this:
                             mp_drawing.draw_landmarks(
                                 vis,
@@ -633,9 +706,22 @@ class MainWindow(QMainWindow):
                                 mp_styles.get_default_hand_landmarks_style(),
                                 mp_styles.get_default_hand_connections_style(),
                             )
+                    try:
+                        if (left_center is None or right_center is None) and len(hand_infos) >= 2:
+                            sorted_hands = sorted([h for h in hand_infos if h[0][0] is not None], key=lambda t: t[0][0])
+                            lc, le, _ = sorted_hands[0]
+                            rc, re, _ = sorted_hands[1]
+                            left_center, right_center = lc, rc
+                            left_ext, right_ext = le, re
+                    except Exception:
+                        pass
                     self.update_hand_states(per_hand_counts)
                     self.update_pinch_states(per_hand_pinch)
                     self.update_index_tap_states(per_hand_index_tap)
+                    try:
+                        self.update_two_hand_zoom(left_center, right_center, left_ext, right_ext)
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
