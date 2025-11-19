@@ -299,6 +299,16 @@ class MainWindow(QMainWindow):
         # 事件1（拇指-食指合拢）状态
         self.pinch_states = {"Left": False, "Right": False}
         self.pinch_since = {"Left": None, "Right": None}
+        self.last_pinch_release_ts = {"Left": None, "Right": None}
+        self.double_pinch_interval = 0.4
+        self.index_tap_states = {"Left": False, "Right": False}
+        self.index_tap_since = {"Left": None, "Right": None}
+        self.last_index_tap_release_ts = {"Left": None, "Right": None}
+        self.last_index_tap_press_ts = {"Left": None, "Right": None}
+        self.double_index_tap_interval = 0.35
+        self.index_bent_on_thres = 0.06
+        self.index_bent_off_thres = 0.08
+        self.index_tap_press_max = 0.25
 
         # Init models
         cfg_path, weights_path, class_names = ensure_models()
@@ -436,15 +446,15 @@ class MainWindow(QMainWindow):
  
     def get_pinch_info(self, hand_landmarks) -> Tuple[bool, float]:
         # 事件1：拇指(4)与食指(8)的归一化距离
-         try:
-             lm = hand_landmarks.landmark
-             dx = lm[8].x - lm[4].x
-             dy = lm[8].y - lm[4].y
-             dist = (dx * dx + dy * dy) ** 0.5
-             return dist < 0.06, dist  # 阈值可调整
-         except Exception:
-             return False, 1.0
- 
+        try:
+            lm = hand_landmarks.landmark
+            dx = lm[8].x - lm[4].x
+            dy = lm[8].y - lm[4].y
+            dist = (dx * dx + dy * dy) ** 0.5
+            return dist < 0.06, dist
+        except Exception:
+            return False, 1.0
+
     def update_pinch_states(self, per_hand_pinch: List[Tuple[str, bool, float]]):
         if not per_hand_pinch:
             return
@@ -478,8 +488,93 @@ class MainWindow(QMainWindow):
                 else:
                     duration_txt = f"距离:{dist:.3f}"
                 self.log_event(f"{side_cn}事件2(拇指食指分离)", duration_txt)
+                now_ts = time.time()
+                last_ts = self.last_pinch_release_ts.get(label)
+                if last_ts is not None:
+                    try:
+                        gap = now_ts - float(last_ts)
+                        if gap <= float(self.double_pinch_interval):
+                            self.log_event(f"{side_cn}事件3(双击捏合)", f"间隔:{gap:.2f}s")
+                            self.last_pinch_release_ts[label] = None
+                        else:
+                            self.last_pinch_release_ts[label] = now_ts
+                    except Exception:
+                        self.last_pinch_release_ts[label] = now_ts
+                else:
+                    self.last_pinch_release_ts[label] = now_ts
                 self.pinch_states[label] = False
                 self.pinch_since[label] = None
+
+    def get_index_bent_info(self, hand_landmarks) -> Tuple[bool, float]:
+        try:
+            lm = hand_landmarks.landmark
+            dx = lm[8].x - lm[6].x
+            dy = lm[8].y - lm[6].y
+            dist = (dx * dx + dy * dy) ** 0.5
+            return dist < self.index_bent_on_thres, dist
+        except Exception:
+            return False, 1.0
+
+    def update_index_tap_states(self, per_hand_index: List[Tuple[str, bool, float]]):
+        if not per_hand_index:
+            return
+        for label, is_bent, bend_dist in per_hand_index:
+            if label not in ("Left", "Right"):
+                continue
+            prev = self.index_tap_states.get(label, False)
+            hand_state = self.hand_states.get(label)
+            if hand_state == "CLENCHED":
+                if prev:
+                    self.index_tap_states[label] = False
+                    self.index_tap_since[label] = None
+                continue
+            if not prev:
+                # 迟滞进入阈值
+                is_bent = bend_dist < self.index_bent_on_thres
+            else:
+                # 迟滞退出阈值
+                is_bent = bend_dist < self.index_bent_off_thres
+            if is_bent and not prev:
+                self.index_tap_states[label] = True
+                self.index_tap_since[label] = time.time()
+                self.last_index_tap_press_ts[label] = self.index_tap_since[label]
+                side_cn = "左手" if label == "Left" else "右手"
+                self.log_event(f"{side_cn}食指点击", f"按下 距离:{bend_dist:.3f}")
+            elif (not is_bent) and prev:
+                side_cn = "左手" if label == "Left" else "右手"
+                now_ts = time.time()
+                # 校验按下持续时间，过长不计为点击
+                press_ts = self.last_index_tap_press_ts.get(label)
+                if press_ts is not None:
+                    try:
+                        press_dur = now_ts - float(press_ts)
+                        if press_dur > float(self.index_tap_press_max):
+                            # 过长按住，作为普通释放，不参与双击
+                            self.log_event(f"{side_cn}食指点击", f"释放(长按:{press_dur:.2f}s)")
+                            self.last_index_tap_release_ts[label] = now_ts
+                            self.index_tap_states[label] = False
+                            self.index_tap_since[label] = None
+                            self.last_index_tap_press_ts[label] = None
+                            continue
+                    except Exception:
+                        pass
+                last_ts = self.last_index_tap_release_ts.get(label)
+                if last_ts is not None:
+                    try:
+                        gap = now_ts - float(last_ts)
+                        if gap <= float(self.double_index_tap_interval):
+                            self.log_event(f"{side_cn}食指双击点击", f"间隔:{gap:.2f}s 距离:{bend_dist:.3f}")
+                            self.last_index_tap_release_ts[label] = None
+                        else:
+                            self.last_index_tap_release_ts[label] = now_ts
+                    except Exception:
+                        self.last_index_tap_release_ts[label] = now_ts
+                else:
+                    self.last_index_tap_release_ts[label] = now_ts
+                self.log_event(f"{side_cn}食指点击", f"释放 距离:{bend_dist:.3f}")
+                self.index_tap_states[label] = False
+                self.index_tap_since[label] = None
+                self.last_index_tap_press_ts[label] = None
 
     def on_frame(self):
         if self.cap is None or self.net is None:
@@ -505,6 +600,7 @@ class MainWindow(QMainWindow):
                     match_thres = float(self.iou_spin.value())
                     per_hand_counts = []
                     per_hand_pinch = []
+                    per_hand_index_tap = []
                     for idx, hand_landmarks in enumerate(res.multi_hand_landmarks):
                         hb = bbox_from_landmarks(hand_landmarks, W, H)
                         draw_this = True
@@ -512,13 +608,11 @@ class MainWindow(QMainWindow):
                             overlaps = [iou(hb, b) for b in boxes]
                             if (not overlaps) or max(overlaps) < match_thres:
                                 draw_this = False
-                        # 识别左右手
                         label = None
                         try:
                             if hasattr(res, "multi_handedness") and res.multi_handedness and len(res.multi_handedness) > idx:
                                 cls = res.multi_handedness[idx].classification[0]
-                                label = cls.label  # "Left" 或 "Right"
-                                # 根据选项调换左右
+                                label = cls.label
                                 if self.swap_handedness_checkbox.isChecked():
                                     label = "Left" if label == "Right" else "Right" if label == "Left" else label
                         except Exception:
@@ -528,6 +622,9 @@ class MainWindow(QMainWindow):
                         if label in ("Left", "Right"):
                             per_hand_counts.append((label, ext))
                             per_hand_pinch.append((label, is_pinch, dist))
+                        bent, bend_dist = self.get_index_bent_info(hand_landmarks)
+                        if label in ("Left", "Right"):
+                            per_hand_index_tap.append((label, bent, bend_dist))
                         if draw_this:
                             mp_drawing.draw_landmarks(
                                 vis,
@@ -538,6 +635,7 @@ class MainWindow(QMainWindow):
                             )
                     self.update_hand_states(per_hand_counts)
                     self.update_pinch_states(per_hand_pinch)
+                    self.update_index_tap_states(per_hand_index_tap)
             except Exception:
                 pass
 
